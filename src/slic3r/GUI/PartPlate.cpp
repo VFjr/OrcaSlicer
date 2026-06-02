@@ -5046,7 +5046,9 @@ int PartPlateList::notify_instance_update(int obj_id, int instance_id, bool is_n
 			plate->add_instance(obj_id, instance_id, false, &boundingbox);
 
 			// spiral mode, update object setting
-			if (plate->config()->has("spiral_mode") && plate->config()->opt_bool("spiral_mode") && !is_object_config_compatible_with_spiral_vase(object)) {
+			const bool plate_spiral  = plate->config()->has("spiral_mode") && plate->config()->opt_bool("spiral_mode");
+			const bool object_spiral = object->config.has("object_spiral_mode") && object->config.get().opt_bool("object_spiral_mode");
+			if ((plate_spiral || object_spiral) && !is_object_config_compatible_with_spiral_vase(object)) {
 				if (!is_new) {
 					auto answer = static_cast<TabPrintPlate*>(wxGetApp().plate_tab)->show_spiral_mode_settings_dialog(true);
 					if (answer == wxID_YES) {

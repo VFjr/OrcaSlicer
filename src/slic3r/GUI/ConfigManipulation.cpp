@@ -641,11 +641,19 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
 
     toggle_line("symmetric_infill_y_axis", is_zig_zag || is_cross_zag || is_locked_zig);
 
-    bool has_spiral_vase         = config->opt_bool("spiral_mode");
+    const bool has_global_spiral = config->has("spiral_mode") && config->opt_bool("spiral_mode");
+    const bool has_object_spiral = config->has("object_spiral_mode") && config->opt_bool("object_spiral_mode");
+    bool has_spiral_vase         = has_global_spiral || has_object_spiral;
     toggle_line("spiral_mode_smooth", has_spiral_vase);
     toggle_line("spiral_mode_max_xy_smoothing", has_spiral_vase && config->opt_bool("spiral_mode_smooth"));
     toggle_line("spiral_starting_flow_ratio", has_spiral_vase);
     toggle_line("spiral_finishing_flow_ratio", has_spiral_vase);
+    if (config->has("object_spiral_mode")) {
+        toggle_line("object_spiral_mode_smooth", has_object_spiral);
+        toggle_line("object_spiral_mode_max_xy_smoothing", has_object_spiral && config->has("object_spiral_mode_smooth") && config->opt_bool("object_spiral_mode_smooth"));
+        toggle_line("object_spiral_starting_flow_ratio", has_object_spiral);
+        toggle_line("object_spiral_finishing_flow_ratio", has_object_spiral);
+    }
     bool has_top_shell    = config->opt_int("top_shell_layers") > 0 || (has_spiral_vase && config->opt_int("bottom_shell_layers") > 1);
     bool has_bottom_shell = config->opt_int("bottom_shell_layers") > 0;
     bool has_solid_infill = has_top_shell || has_bottom_shell;

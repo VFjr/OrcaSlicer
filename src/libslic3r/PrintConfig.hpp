@@ -629,6 +629,8 @@ public:
     void                normalize_fdm_1();
     //return the changed param set
     t_config_option_keys normalize_fdm_2(int num_objects, int used_filaments = 0);
+    // Apply spiral-vase compatibility adjustments to object-scoped settings only (wall loops, infill, etc.).
+    void                normalize_spiral_vase_object();
 
     size_t              get_parameter_size(const std::string& param_name, size_t extruder_nums);
     void                set_num_extruders(unsigned int num_extruders);
@@ -1068,6 +1070,13 @@ PRINT_CONFIG_CLASS_DEFINE(
 
     // Orca: internal use only
     ((ConfigOptionBool,  calib_flowrate_topinfill_special_order)) // ORCA: special flag for flow rate calibration
+
+    // Per-object spiral vase overrides (optional key presence on ModelObject::config; inherit global/plate when unset).
+    ((ConfigOptionBool,               object_spiral_mode))
+    ((ConfigOptionBool,               object_spiral_mode_smooth))
+    ((ConfigOptionFloatOrPercent,     object_spiral_mode_max_xy_smoothing))
+    ((ConfigOptionFloat,              object_spiral_starting_flow_ratio))
+    ((ConfigOptionFloat,              object_spiral_finishing_flow_ratio))
 )
 
 // This object is mapped to Perl as Slic3r::Config::PrintRegion.

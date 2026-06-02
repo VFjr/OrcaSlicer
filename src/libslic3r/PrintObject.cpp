@@ -1233,6 +1233,8 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "tree_support_angle_slow"
             || opt_key == "tree_support_wall_count") {
             steps.emplace_back(posSupportMaterial);
+        } else if (opt_key == "object_spiral_mode") {
+            steps.emplace_back(posSlice);
         } else if (
                opt_key == "bottom_shell_layers"
             || opt_key == "top_shell_layers") {
@@ -1249,7 +1251,7 @@ bool PrintObject::invalidate_state_by_config_options(
             if (value_changed && this->object_extruders().size() > 1) {
                 steps.emplace_back(posSlice);
             }
-            else if (m_print->config().spiral_mode && opt_key == "bottom_shell_layers") {
+            else if (this->spiral_mode_enabled() && opt_key == "bottom_shell_layers") {
                 // Changing the number of bottom layers when a spiral vase is enabled requires re-slicing the object again.
                 // Otherwise, holes in the bottom layers could be filled, as is reported in GH #5528.
                 steps.emplace_back(posSlice);
@@ -1411,8 +1413,10 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "brim_flow_ratio"
             || opt_key == "filament_flow_ratio"
             || opt_key == "scarf_joint_flow_ratio"
-            || opt_key == "spiral_starting_flow_ratio"
-            || opt_key == "spiral_finishing_flow_ratio") {
+            || opt_key == "object_spiral_starting_flow_ratio"
+            || opt_key == "object_spiral_finishing_flow_ratio"
+            || opt_key == "object_spiral_mode_smooth"
+            || opt_key == "object_spiral_mode_max_xy_smoothing") {
             invalidated |= m_print->invalidate_step(psGCodeExport);
         } else if (
                opt_key == "flush_into_infill"
@@ -1492,7 +1496,7 @@ void PrintObject::detect_surfaces_type()
     // are completely hidden inside a collective body of intersecting parts.
     // This is useful if one of the parts is to be dissolved, or if it is transparent and the internal shells
     // should be visible.
-    bool spiral_mode      = this->print()->config().spiral_mode.value;
+    bool spiral_mode      = this->spiral_mode_enabled();
     bool interface_shells = ! spiral_mode && m_config.interface_shells.value;
     size_t num_layers     = spiral_mode ? std::min(size_t(this->printing_region(0).config().bottom_shell_layers), m_layers.size()) : m_layers.size();
 
@@ -1984,7 +1988,7 @@ void PrintObject::discover_vertical_shells()
         Polygons    bottom_surfaces;
         Polygons    holes;
     };
-    bool     spiral_mode      = this->print()->config().spiral_mode.value;
+    bool     spiral_mode      = this->spiral_mode_enabled();
     size_t   num_layers       = spiral_mode ? std::min(size_t(this->printing_region(0).config().bottom_shell_layers), m_layers.size()) : m_layers.size();
     std::vector<DiscoverVerticalShellsCacheEntry> cache_top_botom_regions(num_layers, DiscoverVerticalShellsCacheEntry());
     bool top_bottom_surfaces_all_regions = this->num_printing_regions() > 1 && ! m_config.interface_shells.value;
@@ -3520,12 +3524,37 @@ static void clamp_feature_filament_to_valid(ConfigOptionInt &opt, size_t num_ext
         opt.value = 1;
 }
 
+bool PrintObject::spiral_mode_enabled() const
+{
+    const ModelObject &object = *this->model_object();
+    if (object.config.has("object_spiral_mode"))
+        return object.config.get().opt_bool("object_spiral_mode");
+    return this->print()->config().spiral_mode;
+}
+
+PrintConfig PrintObject::spiral_vase_config() const
+{
+    PrintConfig cfg = this->print()->config();
+    const ModelConfig           &model_cfg = this->model_object()->config;
+    const DynamicPrintConfig    &object_cfg = model_cfg.get();
+    if (model_cfg.has("object_spiral_mode_smooth"))
+        cfg.spiral_mode_smooth.value = object_cfg.opt_bool("object_spiral_mode_smooth");
+    if (model_cfg.has("object_spiral_mode_max_xy_smoothing"))
+        cfg.spiral_mode_max_xy_smoothing = *object_cfg.option<ConfigOptionFloatOrPercent>("object_spiral_mode_max_xy_smoothing");
+    if (model_cfg.has("object_spiral_starting_flow_ratio"))
+        cfg.spiral_starting_flow_ratio.value = object_cfg.opt<ConfigOptionFloat>("object_spiral_starting_flow_ratio")->value;
+    if (model_cfg.has("object_spiral_finishing_flow_ratio"))
+        cfg.spiral_finishing_flow_ratio.value = object_cfg.opt<ConfigOptionFloat>("object_spiral_finishing_flow_ratio")->value;
+    return cfg;
+}
+
 PrintObjectConfig PrintObject::object_config_from_model_object(const PrintObjectConfig &default_object_config, const ModelObject &object, size_t num_extruders)
 {
     PrintObjectConfig config = default_object_config;
     {
         DynamicPrintConfig src_normalized(object.config.get());
         src_normalized.normalize_fdm();
+        src_normalized.normalize_spiral_vase_object();
         config.apply(src_normalized, true);
     }
     // Clamp invalid extruders to the default extruder (with index 1).

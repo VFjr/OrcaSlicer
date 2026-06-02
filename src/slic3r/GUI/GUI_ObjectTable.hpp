@@ -317,6 +317,8 @@ public:
         col_brim_type_reset       = 15,
         col_speed_perimeter       = 16,
         col_speed_perimeter_reset = 17,
+        col_object_spiral_mode    = 18,
+        col_object_spiral_mode_reset = 19,
         col_max
     };
 
@@ -346,6 +348,8 @@ public:
         ConfigOptionEnum<BrimType>  ori_brim_type;
         ConfigOptionFloat           speed_perimeter;
         ConfigOptionFloat           ori_speed_perimeter;
+        ConfigOptionBool            object_spiral_mode;
+        ConfigOptionBool            ori_object_spiral_mode;
 
         ModelConfig*                config;
         ModelVolumeType             model_volume_type;
@@ -398,6 +402,10 @@ public:
                     return speed_perimeter;
                 case col_speed_perimeter_reset:
                     return ori_speed_perimeter;
+                case col_object_spiral_mode:
+                    return object_spiral_mode;
+                case col_object_spiral_mode_reset:
+                    return ori_object_spiral_mode;
                 default:
                     break;
             }

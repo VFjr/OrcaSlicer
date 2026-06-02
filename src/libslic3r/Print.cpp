@@ -22,7 +22,9 @@
 #include <float.h>
 
 #include <algorithm>
+#include <iostream>
 #include <limits>
+#include <sstream>
 #include <unordered_set>
 #include <boost/filesystem/path.hpp>
 #include <boost/format.hpp>
@@ -1328,23 +1330,26 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
         }
     }
 
-    if (m_config.spiral_mode) {
-        size_t total_copies_count = 0;
-        for (const PrintObject* object : m_objects)
-            total_copies_count += object->instances().size();
-        // #4043
-        if (total_copies_count > 1 && m_config.print_sequence != PrintSequence::ByObject)
-            return {L("Please select \"By object\" print sequence to print multiple objects in spiral vase mode."), nullptr, "spiral_mode"};
-        assert(m_objects.size() == 1);
-        const auto all_regions = m_objects.front()->all_regions();
-        if (all_regions.size() > 1) {
-            // Orca: make sure regions are not compatible
-            if (std::any_of(all_regions.begin() + 1, all_regions.end(), [ra = all_regions.front()](const auto rb) {
-                return !Layer::is_perimeter_compatible(ra, rb);
-            })) {
-                return {L("The spiral vase mode does not work when an object contains more than one materials."), nullptr, "spiral_mode"};
+    if (this->any_object_spiral_mode_enabled()) {
+        size_t spiral_copies_count = 0;
+        for (const PrintObject *object : m_objects) {
+            if (!object->spiral_mode_enabled())
+                continue;
+            spiral_copies_count += object->instances().size();
+            const auto all_regions = object->all_regions();
+            if (all_regions.size() > 1) {
+                // Orca: make sure regions are not compatible
+                if (std::any_of(all_regions.begin() + 1, all_regions.end(), [ra = all_regions.front()](const auto rb) {
+                    return !Layer::is_perimeter_compatible(ra, rb);
+                })) {
+                    return {L("The spiral vase mode does not work when an object contains more than one materials."), nullptr, "spiral_mode"};
+                }
             }
         }
+        // #4043
+        if (spiral_copies_count > 1 && m_config.print_sequence != PrintSequence::ByObject)
+            return {L("Please select \"By object\" print sequence to print multiple objects in spiral vase mode."), nullptr, "spiral_mode"};
+
     }
 
     // Cache of layer height profiles for checking:
@@ -1361,6 +1366,128 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
             PrintObject::update_layer_height_profile(*print_object.model_object(), print_object.slicing_parameters(), profile);
         return profile;
     };
+
+    if (this->any_object_spiral_mode_enabled() && m_config.print_sequence == PrintSequence::ByLayer && m_objects.size() > 1) {
+        auto log_spiral_dbg = [](const std::string &msg) {
+            BOOST_LOG_TRIVIAL(warning) << msg;
+            std::cerr << "[SPIRAL_DEBUG] " << msg << std::endl;
+        };
+        auto has_layer_at_z = [](const std::vector<coordf_t> &layers, const coordf_t z) {
+            for (const coordf_t lz : layers)
+                if (std::abs(lz - z) < EPSILON)
+                    return true;
+            return false;
+        };
+        auto nearest_layer_delta = [](const std::vector<coordf_t> &layers, const coordf_t z) {
+            if (layers.empty())
+                return std::numeric_limits<coordf_t>::max();
+            coordf_t best = std::abs(layers.front() - z);
+            for (const coordf_t lz : layers)
+                best = std::min(best, coordf_t(std::abs(lz - z)));
+            return best;
+        };
+        auto layer_preview = [](const std::vector<coordf_t> &layers) {
+            std::string out;
+            const size_t n = layers.size();
+            const size_t head = std::min<size_t>(n, 6);
+            for (size_t i = 0; i < head; ++i) {
+                if (!out.empty()) out += ", ";
+                out += std::to_string(layers[i]);
+            }
+            if (n > head) {
+                out += " ... ";
+                const size_t tail_start = n > 3 ? n - 3 : head;
+                for (size_t i = tail_start; i < n; ++i) {
+                    if (i != tail_start) out += ", ";
+                    out += std::to_string(layers[i]);
+                }
+            }
+            return out;
+        };
+        struct ObjectZRange { coordf_t min_z; coordf_t max_z; };
+        std::vector<std::vector<coordf_t>> object_layer_zs(m_objects.size());
+        std::vector<ObjectZRange>          object_z_ranges(m_objects.size());
+        std::vector<coordf_t>              object_layer_z_offsets(m_objects.size(), 0.);
+        for (size_t i = 0; i < m_objects.size(); ++i)
+            object_layer_zs[i] = generate_object_layers(m_objects[i]->slicing_parameters(), layer_height_profile(i), m_objects[i]->config().precise_z_height.value);
+        for (size_t i = 0; i < m_objects.size(); ++i) {
+            const PrintObject *obj = m_objects[i];
+            const SlicingParameters &sp = obj->slicing_parameters();
+            coordf_t min_z = std::numeric_limits<coordf_t>::max();
+            coordf_t max_z = std::numeric_limits<coordf_t>::lowest();
+            for (const PrintInstance &inst : obj->instances()) {
+                const BoundingBoxf3 bb = obj->model_object()->instance_bounding_box(*inst.model_instance, false);
+                min_z = std::min(min_z, coordf_t(bb.min.z()));
+                max_z = std::max(max_z, coordf_t(bb.max.z()));
+            }
+            if (min_z > max_z) {
+                min_z = sp.object_print_z_min;
+                max_z = sp.object_print_z_max;
+            }
+            object_z_ranges[i] = {min_z, max_z};
+            // generate_object_layers() returns object-local Z, shift into world/plate Z.
+            object_layer_z_offsets[i] = min_z - sp.object_print_z_min;
+            for (coordf_t &z : object_layer_zs[i])
+                z += object_layer_z_offsets[i];
+        }
+        {
+            std::ostringstream oss;
+            oss << "Spiral by-layer validation start: objects=" << m_objects.size()
+                << " print_sequence=ByLayer";
+            log_spiral_dbg(oss.str());
+        }
+        for (size_t i = 0; i < m_objects.size(); ++i) {
+            const PrintObject *obj = m_objects[i];
+            const SlicingParameters &sp = obj->slicing_parameters();
+            std::ostringstream oss;
+            oss << "Spiral by-layer object[" << i << "]"
+                << " name=\"" << obj->model_object()->name << "\""
+                << " printable=" << obj->model_object()->printable
+                << " spiral_enabled=" << obj->spiral_mode_enabled()
+                << " model_bbox_z=[" << object_z_ranges[i].min_z << ", " << object_z_ranges[i].max_z << "]"
+                << " slicing_z=[" << sp.object_print_z_min << ", " << sp.object_print_z_max << "]"
+                << " layer_z_offset=" << object_layer_z_offsets[i]
+                << " layers=" << object_layer_zs[i].size()
+                << " preview=[" << layer_preview(object_layer_zs[i]) << "]";
+            log_spiral_dbg(oss.str());
+        }
+
+        for (size_t si = 0; si < m_objects.size(); ++si) {
+            const PrintObject *spiral_object = m_objects[si];
+            if (!spiral_object->spiral_mode_enabled())
+                continue;
+            const SlicingParameters &spiral_params = spiral_object->slicing_parameters();
+            const coordf_t spiral_start_z = object_layer_z_offsets[si] + spiral_params.object_print_z_min + spiral_object->printing_region(0).config().bottom_shell_thickness;
+            for (const coordf_t z : object_layer_zs[si]) {
+                if (z < spiral_start_z - EPSILON)
+                    continue;
+                for (size_t oi = 0; oi < m_objects.size(); ++oi) {
+                    if (oi == si || !m_objects[oi]->model_object()->printable)
+                        continue;
+                    // Skip objects that are entirely outside this Z slice in actual model space.
+                    if (z < object_z_ranges[oi].min_z - EPSILON || z > object_z_ranges[oi].max_z + EPSILON)
+                        continue;
+                    if (has_layer_at_z(object_layer_zs[oi], z)) {
+                        const coordf_t nearest_delta = nearest_layer_delta(object_layer_zs[oi], z);
+                        std::ostringstream oss;
+                        oss << "Spiral by-layer overlap detected: spiral_object=\"" << spiral_object->model_object()->name
+                            << "\" other_object=\"" << m_objects[oi]->model_object()->name
+                            << "\" z=" << z
+                            << " other_min_z=" << object_z_ranges[oi].min_z
+                            << " other_max_z=" << object_z_ranges[oi].max_z
+                            << " other_nearest_layer_delta=" << nearest_delta
+                            << " spiral_start_z=" << spiral_start_z
+                            << " spiral_object_min_z=" << spiral_params.object_print_z_min
+                            << " spiral_object_max_z=" << spiral_params.object_print_z_max;
+                        log_spiral_dbg(oss.str());
+                        return {L("Spiral vase mode with \"By layer\" print sequence requires only one object to print at each layer height. "
+                                  "Use \"By object\" sequencing for side-by-side objects, or stack objects so their layer heights do not overlap."),
+                                nullptr, "spiral_mode"};
+                    }
+                }
+            }
+        }
+    }
 
     // Checks that the print does not exceed the max print height
     for (size_t print_object_idx = 0; print_object_idx < m_objects.size(); ++ print_object_idx) {
@@ -3077,6 +3204,14 @@ std::vector<std::set<int>> Print::get_physical_unprintable_filaments(const std::
 }
 
 
+bool Print::any_object_spiral_mode_enabled() const
+{
+    for (const PrintObject *object : m_objects)
+        if (object->spiral_mode_enabled())
+            return true;
+    return false;
+}
+
 std::vector<double> Print::get_extruder_printable_height() const
 {
     return m_config.extruder_printable_height.values;
@@ -3125,7 +3260,7 @@ bool Print::has_wipe_tower() const
         if (enable_timelapse_print())
             return true;
 
-        return !m_config.spiral_mode.value && m_config.filament_diameter.values.size() > 1;
+        return !this->any_object_spiral_mode_enabled() && m_config.filament_diameter.values.size() > 1;
     }
     return false;
 }

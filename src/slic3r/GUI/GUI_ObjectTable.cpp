@@ -1915,6 +1915,15 @@ void ObjectGridTable::init_cols(ObjectGrid *object_grid)
     col = new ObjectGridCol(coFloat, "inner_wall_speed_reset", L("Speed"), false, true, false, false, wxALIGN_LEFT);
     m_col_data.push_back(col);
 
+    // object-only spiral vase override
+    col = new ObjectGridCol(coBool, "object_spiral_mode", L("Others"), true, false, true, true, wxALIGN_CENTRE);
+    col->size = object_grid->GetTextExtent(L("Spiral vase")).x;
+    m_col_data.push_back(col);
+
+    // reset icon for object spiral mode
+    col = new ObjectGridCol(coBool, "object_spiral_mode_reset", L("Others"), true, true, false, false, wxALIGN_LEFT);
+    m_col_data.push_back(col);
+
     return;
 }
 
@@ -1982,6 +1991,11 @@ void ObjectGridTable::construct_object_configs(ObjectGrid *object_grid)
         object_grid->ori_brim_type = *(global_config.option<ConfigOptionEnum<BrimType>>(m_col_data[col_brim_type]->key));
         object_grid->speed_perimeter = *(get_object_config_value<ConfigOptionFloat>(global_config, object_grid->config, m_col_data[col_speed_perimeter]->key));
         object_grid->ori_speed_perimeter = *(global_config.option<ConfigOptionFloat>(m_col_data[col_speed_perimeter]->key));
+        const bool global_spiral_mode = global_config.has("spiral_mode") && global_config.opt_bool("spiral_mode");
+        object_grid->ori_object_spiral_mode.value = global_spiral_mode;
+        object_grid->object_spiral_mode.value = object_grid->config->has("object_spiral_mode")
+            ? static_cast<const ConfigOptionBool*>(object_grid->config->option("object_spiral_mode"))->value
+            : global_spiral_mode;
         m_grid_data.push_back(object_grid);
 
         int volume_count = object->volumes.size();
@@ -2065,6 +2079,7 @@ void ObjectGridTable::SetSelection(int object_id, int volume_id)
 
 void ObjectGridTable::reload_object_data(ObjectGridRow* grid_row, const std::string& category, DynamicPrintConfig&  global_config)
 {
+    const bool global_spiral_mode = global_config.has("spiral_mode") && global_config.opt_bool("spiral_mode");
     if (category == ObjectGridTable::category_all) {
         grid_row->layer_height = *(get_object_config_value<ConfigOptionFloat>(global_config, grid_row->config, m_col_data[col_layer_height]->key));
         grid_row->ori_layer_height = *(global_config.option<ConfigOptionFloat>(m_col_data[col_layer_height]->key));
@@ -2078,6 +2093,10 @@ void ObjectGridTable::reload_object_data(ObjectGridRow* grid_row, const std::str
         grid_row->ori_brim_type = *(global_config.option<ConfigOptionEnum<BrimType>>(m_col_data[col_brim_type]->key));
         grid_row->speed_perimeter = *(get_object_config_value<ConfigOptionFloat>(global_config, grid_row->config, m_col_data[col_speed_perimeter]->key));
         grid_row->ori_speed_perimeter = *(global_config.option<ConfigOptionFloat>(m_col_data[col_speed_perimeter]->key));
+        grid_row->ori_object_spiral_mode.value = global_spiral_mode;
+        grid_row->object_spiral_mode.value = grid_row->config->has("object_spiral_mode")
+            ? static_cast<const ConfigOptionBool*>(grid_row->config->option("object_spiral_mode"))->value
+            : global_spiral_mode;
     }
     else if (category == L("Quality")) {
         grid_row->layer_height = *(get_object_config_value<ConfigOptionFloat>(global_config, grid_row->config, m_col_data[col_layer_height]->key));
@@ -2100,6 +2119,12 @@ void ObjectGridTable::reload_object_data(ObjectGridRow* grid_row, const std::str
     else if (category == L("Speed")) {
         grid_row->speed_perimeter = *(get_object_config_value<ConfigOptionFloat>(global_config, grid_row->config, m_col_data[col_speed_perimeter]->key));
         grid_row->ori_speed_perimeter = *(global_config.option<ConfigOptionFloat>(m_col_data[col_speed_perimeter]->key));
+    }
+    else if (category == L("Others")) {
+        grid_row->ori_object_spiral_mode.value = global_spiral_mode;
+        grid_row->object_spiral_mode.value = grid_row->config->has("object_spiral_mode")
+            ? static_cast<const ConfigOptionBool*>(grid_row->config->option("object_spiral_mode"))->value
+            : global_spiral_mode;
     }
 }
 

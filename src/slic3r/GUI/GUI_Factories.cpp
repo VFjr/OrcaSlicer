@@ -95,7 +95,12 @@ std::map<std::string, std::vector<SimpleSettingData>>  SettingsFactory::OBJECT_C
                     {"support_object_first_layer_gap","",33}
                     }},
     { L("Speed"), {{"support_speed", "",12}, {"support_interface_speed", "",13}
-                  }}
+                  }},
+    { L("Others"), {{"object_spiral_mode", "", 1},
+                    {"object_spiral_mode_smooth", "", 2},
+                    {"object_spiral_mode_max_xy_smoothing", "", 3},
+                    {"object_spiral_starting_flow_ratio", "", 4},
+                    {"object_spiral_finishing_flow_ratio", "", 5}}}
 };
 
 std::map<std::string, std::vector<SimpleSettingData>> SettingsFactory::PART_CATEGORY_SETTINGS =
@@ -305,6 +310,8 @@ std::map<std::string, std::string> SettingsFactory::CATEGORY_ICON =
     { L("Infill")               , "blank_14"    },
     { L("Ironing")              , "blank_14"    },
     { L("Fuzzy Skin")           , "menu_fuzzy_skin"  },
+    { L("Others")               , "blank_14"         },
+    { L("Special mode")         , "blank_14"         },
     { L("Support")              , "support"     },
     { L("Speed")                , "blank_14"    },
     { L("Extruders")            , "blank_14"    },

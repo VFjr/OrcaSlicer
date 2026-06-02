@@ -33,6 +33,8 @@
 #include <map>
 #include <set>
 #include <string>
+#include <unordered_map>
+#include <vector>
 #include <cfloat>
 
 namespace Slic3r {
@@ -170,13 +172,15 @@ struct LayerResult {
     size_t      layer_id;
     // Is spiral vase post processing enabled for this layer?
     bool        spiral_vase_enable { false };
+    // PrintObject whose spiral vase settings apply to this layer (nullptr if none).
+    const PrintObject *spiral_vase_object { nullptr };
     // Should the cooling buffer content be flushed at the end of this layer?
     bool        cooling_buffer_flush { false };
 	// Is indicating if this LayerResult should be processed, or it is just inserted artificial LayerResult.
     // It is used for the pressure equalizer because it needs to buffer one layer back.
     bool        nop_layer_result { false };
 
-    static LayerResult make_nop_layer_result() { return {"", std::numeric_limits<coord_t>::max(), false, false, true}; }
+    static LayerResult make_nop_layer_result() { return {"", std::numeric_limits<coord_t>::max(), false, nullptr, false, true}; }
 };
 
 class GCode {
@@ -228,6 +232,8 @@ public:
     Vec2d point_to_gcode_quantized(const Point& point) const;
     Vec3d                    point_to_gcode_quantized(const Point3& point) const;
     const FullPrintConfig &config() const { return m_config; }
+    const PrintConfig&     print_config() const { return static_cast<const PrintConfig&>(m_config); }
+    PrintConfig&           print_config() { return static_cast<PrintConfig&>(m_config); }
     const Layer*    layer() const { return m_layer; }
     GCodeWriter&    writer() { return m_writer; }
     const GCodeWriter& writer() const { return m_writer; }
@@ -599,7 +605,16 @@ private:
     bool                                m_last_pos_defined;
 
     std::unique_ptr<CoolingBuffer>      m_cooling_buffer;
-    std::unique_ptr<SpiralVase>         m_spiral_vase;
+    struct SpiralVaseEntry {
+        PrintConfig                     config_storage;
+        std::unique_ptr<SpiralVase>     vase;
+    };
+    std::vector<SpiralVaseEntry>        m_spiral_vases;
+    std::unordered_map<const PrintObject*, SpiralVase*> m_spiral_vase_by_object;
+
+    bool        has_spiral_vase() const { return !m_spiral_vases.empty(); }
+    SpiralVase* spiral_vase_for_object(const PrintObject *object) const;
+    void        apply_effective_spiral_config(const PrintObject &object);
 
     std::unique_ptr<PressureEqualizer>  m_pressure_equalizer;
     

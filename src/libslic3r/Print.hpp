@@ -468,6 +468,10 @@ public:
     size_t get_id() const { return m_id; }
     void set_id(size_t id) { m_id = id; }
 
+    // Effective spiral vase mode: per-object override if set on ModelObject::config, else global/plate print config.
+    bool        spiral_mode_enabled() const;
+    PrintConfig spiral_vase_config() const;
+
   private:
     // to be called from Print only.
     friend class Print;
@@ -942,6 +946,8 @@ public:
     std::vector<unsigned int> extruders(bool conside_custom_gcode = false) const;
     double              max_allowed_layer_height() const;
     bool                has_support_material() const;
+    // True if global/plate spiral is on or any object has an effective per-object spiral override enabled.
+    bool                any_object_spiral_mode_enabled() const;
     // Make sure the background processing has no access to this model_object during this call!
     void                auto_assign_extruders(ModelObject* model_object) const;
 

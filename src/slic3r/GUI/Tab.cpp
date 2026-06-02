@@ -2956,6 +2956,19 @@ void TabPrintModel::build()
 {
     m_presets = &m_prints;
     TabPrint::build();
+    for (auto &p : m_pages) {
+        if (p->title() != L("Others"))
+            continue;
+        auto special_mode = p->get_optgroup(L("Special mode"));
+        if (!special_mode)
+            continue;
+        special_mode->append_single_option_line("object_spiral_mode", "others_settings_special_mode#spiral-vase");
+        special_mode->append_single_option_line("object_spiral_mode_smooth", "others_settings_special_mode#smooth-spiral");
+        special_mode->append_single_option_line("object_spiral_mode_max_xy_smoothing", "others_settings_special_mode#max-xy-smoothing");
+        special_mode->append_single_option_line("object_spiral_starting_flow_ratio", "others_settings_special_mode#spiral-starting-flow-ratio");
+        special_mode->append_single_option_line("object_spiral_finishing_flow_ratio", "others_settings_special_mode#spiral-finishing-flow-ratio");
+        break;
+    }
     init_options_list();
 
     auto page = add_options_page(L("Frequent"), "empty");

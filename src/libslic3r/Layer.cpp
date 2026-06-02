@@ -344,7 +344,7 @@ void Layer::simplify_support_entity_collection(ExtrusionEntityCollection* entity
 void Layer::simplify_support_path(ExtrusionPath * path)
 {
     const auto print_config = this->object()->print()->config();
-    const bool spiral_mode = print_config.spiral_mode;
+    const bool spiral_mode = this->object()->spiral_mode_enabled();
     const bool enable_arc_fitting = print_config.enable_arc_fitting;
     const auto scaled_resolution = scaled<double>(print_config.resolution.value);
 
@@ -359,7 +359,7 @@ void Layer::simplify_support_path(ExtrusionPath * path)
 void Layer::simplify_support_multi_path(ExtrusionMultiPath* multipath)
 {
     const auto print_config = this->object()->print()->config();
-    const bool spiral_mode = print_config.spiral_mode;
+    const bool spiral_mode = this->object()->spiral_mode_enabled();
     const bool enable_arc_fitting = print_config.enable_arc_fitting;
     const auto scaled_resolution = scaled<double>(print_config.resolution.value);
 
@@ -376,7 +376,7 @@ void Layer::simplify_support_multi_path(ExtrusionMultiPath* multipath)
 void Layer::simplify_support_loop(ExtrusionLoop* loop)
 {
     const auto print_config = this->object()->print()->config();
-    const bool spiral_mode = print_config.spiral_mode;
+    const bool spiral_mode = this->object()->spiral_mode_enabled();
     const bool enable_arc_fitting = print_config.enable_arc_fitting;
     const auto scaled_resolution = scaled<double>(print_config.resolution.value);
 

@@ -148,6 +148,7 @@ static inline bool model_volume_needs_slicing(const ModelVolume &mv)
 static std::vector<VolumeSlices> slice_volumes_inner(
     const PrintConfig                                        &print_config,
     const PrintObjectConfig                                  &print_object_config,
+    const bool                                                spiral_mode_enabled,
     const Transform3d                                        &object_trafo,
     ModelVolumePtrs                                           model_volumes,
     const std::vector<PrintObjectRegions::LayerRangeRegions> &layer_ranges,
@@ -193,7 +194,7 @@ static std::vector<VolumeSlices> slice_volumes_inner(
                 params.extra_offset = extra_offset;
             if (layer_ranges.size() == 1) {
                 if (const PrintObjectRegions::LayerRangeRegions &layer_range = layer_ranges.front(); layer_range.has_volume(model_volume->id())) {
-                    if (model_volume->is_model_part() && print_config.spiral_mode) {
+                    if (model_volume->is_model_part() && spiral_mode_enabled) {
                         auto it = std::find_if(layer_range.volume_regions.begin(), layer_range.volume_regions.end(),
                             [model_volume](const auto &slice){ return model_volume == slice.model_volume; });
                         params.mode = MeshSlicingParams::SlicingMode::PositiveLargestContour;
@@ -210,7 +211,7 @@ static std::vector<VolumeSlices> slice_volumes_inner(
                     });
                 }
             } else {
-                assert(! print_config.spiral_mode);
+                assert(! spiral_mode_enabled);
                 slicing_ranges.clear();
                 for (const PrintObjectRegions::LayerRangeRegions &layer_range : layer_ranges)
                     if (layer_range.has_volume(model_volume->id()))
@@ -1169,7 +1170,7 @@ void PrintObject::slice_volumes()
     std::vector<VolumeSlices> objSliceByVolume;
     if (!slice_zs.empty()) {
         objSliceByVolume = slice_volumes_inner(
-            print->config(), this->config(), this->trafo_centered(),
+            print->config(), this->config(), this->spiral_mode_enabled(), this->trafo_centered(),
             this->model_object()->volumes, m_shared_regions->layer_ranges, slice_zs, throw_on_cancel_callback);
     }
 

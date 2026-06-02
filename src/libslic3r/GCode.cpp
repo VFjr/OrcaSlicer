@@ -2127,7 +2127,7 @@ void GCode::do_export(Print* print, const char* path, GCodeProcessorResult* resu
     // Post-process the G-code to update time stamps.
 
     m_timelapse_warning_code = 0;
-    if (m_config.printer_structure.value == PrinterStructure::psI3 && m_spiral_vase) {
+    if (m_config.printer_structure.value == PrinterStructure::psI3 && this->has_spiral_vase()) {
         m_timelapse_warning_code += 1;
     }
     if (m_config.printer_structure.value == PrinterStructure::psI3 && print->config().print_sequence == PrintSequence::ByObject) {
@@ -2532,8 +2532,20 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     //m_volumetric_speed = DoExport::autospeed_volumetric_limit(print);
     print.throw_if_canceled();
 
-    if (print.config().spiral_mode.value)
-        m_spiral_vase = make_unique<SpiralVase>(print.config());
+    m_spiral_vases.clear();
+    m_spiral_vase_by_object.clear();
+    const double nozzle_diameter = print.config().nozzle_diameter.get_at(0);
+    for (const PrintObject *object : print.objects()) {
+        if (!object->spiral_mode_enabled())
+            continue;
+        m_spiral_vases.emplace_back();
+        auto &entry = m_spiral_vases.back();
+        entry.config_storage = object->spiral_vase_config();
+        const float max_xy_smoothing = entry.config_storage.get_abs_value("spiral_mode_max_xy_smoothing", nozzle_diameter);
+        entry.vase = make_unique<SpiralVase>(entry.config_storage);
+        entry.vase->set_max_xy_smoothing(max_xy_smoothing);
+        m_spiral_vase_by_object[object] = entry.vase.get();
+    }
 
     if (print.config().max_volumetric_extrusion_rate_slope.value > 0){
     		m_pressure_equalizer = make_unique<PressureEqualizer>(print.config());
@@ -3680,19 +3692,22 @@ void GCode::process_layers(
                 return this->process_layer(print, layer.second, layer_tools, &layer == &layers_to_print.back(), &print_object_instances_ordering, tool_ordering.get_most_used_extruder(), size_t(-1));
             }
         });
-    if (m_spiral_vase) {
-        float nozzle_diameter  = EXTRUDER_CONFIG(nozzle_diameter);
-        float max_xy_smoothing = m_config.get_abs_value("spiral_mode_max_xy_smoothing", nozzle_diameter);
-        this->m_spiral_vase->set_max_xy_smoothing(max_xy_smoothing);
-    }
     const auto spiral_mode = tbb::make_filter<LayerResult, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
-        [&spiral_mode = *this->m_spiral_vase.get(), &layers_to_print](LayerResult in) -> LayerResult {
+        [&spiral_vases = this->m_spiral_vase_by_object, &layers_to_print](LayerResult in) -> LayerResult {
         	if (in.nop_layer_result)
                 return in;
-                
-            spiral_mode.enable(in.spiral_vase_enable);
-            bool last_layer = in.layer_id == layers_to_print.size() - 1;
-            return { spiral_mode.process_layer(std::move(in.gcode), last_layer), in.layer_id, in.spiral_vase_enable, in.cooling_buffer_flush};
+
+            std::string gcode = std::move(in.gcode);
+            if (in.spiral_vase_enable && in.spiral_vase_object != nullptr) {
+                auto it = spiral_vases.find(in.spiral_vase_object);
+                if (it != spiral_vases.end() && it->second != nullptr) {
+                    SpiralVase &spiral_vase = *it->second;
+                    spiral_vase.enable(true);
+                    const bool last_layer = in.layer_id == layers_to_print.size() - 1;
+                    gcode = spiral_vase.process_layer(std::move(gcode), last_layer);
+                }
+            }
+            return { std::move(gcode), in.layer_id, in.spiral_vase_enable, in.spiral_vase_object, in.cooling_buffer_flush};
         });
     const auto pressure_equalizer = tbb::make_filter<LayerResult, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
         [pressure_equalizer = this->m_pressure_equalizer.get()](LayerResult in) -> LayerResult {
@@ -3735,9 +3750,9 @@ void GCode::process_layers(
     });
 
     // The pipeline elements are joined using const references, thus no copying is performed.
-    if (m_spiral_vase && m_pressure_equalizer)
+    if (this->has_spiral_vase() && m_pressure_equalizer)
         tbb::parallel_pipeline(12, generator & spiral_mode & pressure_equalizer & cooling & fan_mover & output);
-    else if (m_spiral_vase)
+    else if (this->has_spiral_vase())
     	tbb::parallel_pipeline(12, generator & spiral_mode & cooling & fan_mover & output);
     else if	(m_pressure_equalizer)
         tbb::parallel_pipeline(12, generator & pressure_equalizer & cooling & fan_mover & pa_processor_filter & output);
@@ -3781,18 +3796,21 @@ void GCode::process_layers(
                 return this->process_layer(print, { std::move(layer) }, tool_ordering.tools_for_layer(layer.print_z()), &layer == &layers_to_print.back(), nullptr, tool_ordering.get_most_used_extruder(), single_object_idx, prime_extruder);
             }
         });
-    if (m_spiral_vase) {
-        float nozzle_diameter  = EXTRUDER_CONFIG(nozzle_diameter);
-        float max_xy_smoothing = m_config.get_abs_value("spiral_mode_max_xy_smoothing", nozzle_diameter);
-        this->m_spiral_vase->set_max_xy_smoothing(max_xy_smoothing);
-    }
     const auto spiral_mode = tbb::make_filter<LayerResult, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
-        [&spiral_mode = *this->m_spiral_vase.get(), &layers_to_print](LayerResult in)->LayerResult {
+        [&spiral_vases = this->m_spiral_vase_by_object, &layers_to_print](LayerResult in)->LayerResult {
             if (in.nop_layer_result)
                 return in;
-            spiral_mode.enable(in.spiral_vase_enable);
-            bool last_layer = in.layer_id == layers_to_print.size() - 1;
-            return { spiral_mode.process_layer(std::move(in.gcode), last_layer), in.layer_id, in.spiral_vase_enable, in.cooling_buffer_flush };
+            std::string gcode = std::move(in.gcode);
+            if (in.spiral_vase_enable && in.spiral_vase_object != nullptr) {
+                auto it = spiral_vases.find(in.spiral_vase_object);
+                if (it != spiral_vases.end() && it->second != nullptr) {
+                    SpiralVase &spiral_vase = *it->second;
+                    spiral_vase.enable(true);
+                    const bool last_layer = in.layer_id == layers_to_print.size() - 1;
+                    gcode = spiral_vase.process_layer(std::move(gcode), last_layer);
+                }
+            }
+            return { std::move(gcode), in.layer_id, in.spiral_vase_enable, in.spiral_vase_object, in.cooling_buffer_flush };
         });
     const auto pressure_equalizer = tbb::make_filter<LayerResult, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
         [pressure_equalizer = this->m_pressure_equalizer.get()](LayerResult in) -> LayerResult {
@@ -3833,9 +3851,9 @@ void GCode::process_layers(
     });
 
     // The pipeline elements are joined using const references, thus no copying is performed.
-    if (m_spiral_vase && m_pressure_equalizer)
+    if (this->has_spiral_vase() && m_pressure_equalizer)
         tbb::parallel_pipeline(12, generator & spiral_mode & pressure_equalizer & cooling & fan_mover & output);
-    else if (m_spiral_vase)
+    else if (this->has_spiral_vase())
     	tbb::parallel_pipeline(12, generator & spiral_mode & cooling & fan_mover & output);
     else if	(m_pressure_equalizer)
         tbb::parallel_pipeline(12, generator & pressure_equalizer & cooling & fan_mover & pa_processor_filter & output);
@@ -4486,7 +4504,7 @@ LayerResult GCode::process_layer(
     else if (support_layer != nullptr)
         layer_ptr = support_layer;
     const Layer& layer = *layer_ptr;
-    LayerResult   result { {}, layer.id(), false, last_layer };
+    LayerResult   result { {}, layer.id(), false, nullptr, last_layer, false };
     if (layer_tools.extruders.empty())
         // Nothing to extrude.
         return result;
@@ -4502,11 +4520,13 @@ LayerResult GCode::process_layer(
 
     // Initialize config with the 1st object to be printed at this layer.
     m_config.apply(layer.object()->config(), true);
+    this->apply_effective_spiral_config(*layer.object());
 
     // Check whether it is possible to apply the spiral vase logic for this layer.
     // Just a reminder: A spiral vase mode is allowed for a single object, single material print only.
     m_enable_loop_clipping = true;
-    if (m_spiral_vase && layers.size() == 1 && support_layer == nullptr) {
+    SpiralVase *spiral_vase = this->spiral_vase_for_object(layer.object());
+    if (spiral_vase && layer.object()->spiral_mode_enabled() && layers.size() == 1 && support_layer == nullptr) {
         bool enable = (layer.id() > 0 || !print.has_brim()) && (layer.id() >= (size_t)print.config().skirt_height.value && ! print.has_infinite_skirt());
         if (enable) {
             for (const LayerRegion *layer_region : layer.regions())
@@ -4518,6 +4538,7 @@ LayerResult GCode::process_layer(
                 }
         }
         result.spiral_vase_enable = enable;
+        result.spiral_vase_object = layer.object();
         // If we're going to apply spiralvase to this layer, disable loop clipping.
         m_enable_loop_clipping = !enable;
     }
@@ -4559,7 +4580,7 @@ LayerResult GCode::process_layer(
 
     bool need_insert_timelapse_gcode_for_traditional = false;
     if ((!m_wipe_tower || !m_wipe_tower->enable_timelapse_print()) && (is_BBL_Printer() || !m_config.time_lapse_gcode.value.empty())) {
-        need_insert_timelapse_gcode_for_traditional = ((is_i3_printer && !m_spiral_vase) || is_multi_extruder);
+        need_insert_timelapse_gcode_for_traditional = ((is_i3_printer && !this->has_spiral_vase()) || is_multi_extruder);
     }
 
     bool has_insert_timelapse_gcode = false;
@@ -5676,7 +5697,7 @@ std::string GCode::change_layer(coordf_t print_z)
 
     m_writer.add_object_change_labels(gcode);
 
-    if (m_spiral_vase) {
+    if (this->print_config().spiral_mode) {
         //BBS: force to normal lift immediately in spiral vase mode
         std::ostringstream comment;
         comment << "move to next layer (" << m_layer_index << ")";
@@ -5731,7 +5752,7 @@ std::string GCode::extrude_loop(const ExtrusionLoop&        loop_ref,
 
     bool is_hole = (loop.loop_role() & elrHole) == elrHole;
 
-    if (m_config.spiral_mode && !is_hole) {
+    if (this->print_config().spiral_mode && !is_hole) {
         // if spiral vase, we have to ensure that all contour are in the same orientation.
         if (m_config.wall_direction == WallDirection::CounterClockwise)
             loop.make_counter_clockwise();
@@ -5746,7 +5767,7 @@ std::string GCode::extrude_loop(const ExtrusionLoop&        loop_ref,
     // or, if `start_point` is specified, start the loop at point closest to it
     Point last_pos = start_point ? *start_point : this->last_pos();
     float seam_overhang = std::numeric_limits<float>::lowest();
-    if (!m_config.spiral_mode && description == "perimeter") {
+    if (!this->print_config().spiral_mode && description == "perimeter") {
         assert(m_layer != nullptr);
         m_seam_placer.place_seam(m_layer, loop, last_pos, seam_overhang);
     } else
@@ -5754,7 +5775,7 @@ std::string GCode::extrude_loop(const ExtrusionLoop&        loop_ref,
 
     const auto seam_scarf_type = m_config.seam_slope_type.value;
     bool enable_seam_slope = ((seam_scarf_type == SeamScarfType::External && !is_hole) || seam_scarf_type == SeamScarfType::All) &&
-        !m_config.spiral_mode &&
+        !this->print_config().spiral_mode &&
         (loop.role() == erExternalPerimeter || (loop.role() == erPerimeter && m_config.seam_slope_inner_walls)) &&
         layer_id() > 0;
     const auto nozzle_diameter = EXTRUDER_CONFIG(nozzle_diameter);
@@ -6967,7 +6988,7 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
             }
             // BBS: use G1 if not enable arc fitting or has no arc fitting result or in spiral_mode mode or we are doing sloped extrusion
             // Attention: G2 and G3 is not supported in spiral_mode mode
-            if (!m_config.enable_arc_fitting || path.polyline.fitting_result.empty() || m_config.spiral_mode || sloped != nullptr || path.z_contoured) {
+            if (!m_config.enable_arc_fitting || path.polyline.fitting_result.empty() || this->print_config().spiral_mode || sloped != nullptr || path.z_contoured) {
                 double path_length = 0.;
                 double total_length = sloped == nullptr ? 0. : path.polyline.length() * SCALING_FACTOR;
                 double saved_z      = m_writer.get_position().z();
@@ -7679,7 +7700,7 @@ std::string GCode::retract(bool toolchange, bool is_last_retraction, LiftType li
         if (apply_instantly)
             gcode += m_writer.eager_lift(lift_type);
         else
-            gcode += m_writer.lazy_lift(lift_type, m_spiral_vase != nullptr);
+            gcode += m_writer.lazy_lift(lift_type, this->print_config().spiral_mode);
     }
 
     return gcode;
@@ -8238,5 +8259,23 @@ void GCode::ObjectByExtruder::Island::Region::append(const Type type, const Extr
 // Index into std::vector<LayerToPrint>, which contains Object and Support layers for the current print_z, collected for
 // a single object, or for possibly multiple objects with multiple instances.
 
+SpiralVase* GCode::spiral_vase_for_object(const PrintObject *object) const
+{
+    if (object == nullptr)
+        return nullptr;
+    auto it = m_spiral_vase_by_object.find(object);
+    return it == m_spiral_vase_by_object.end() ? nullptr : it->second;
+}
+
+void GCode::apply_effective_spiral_config(const PrintObject &object)
+{
+    const PrintConfig spiral_cfg = object.spiral_vase_config();
+    PrintConfig      &cfg        = this->print_config();
+    cfg.spiral_mode.value                    = object.spiral_mode_enabled();
+    cfg.spiral_mode_smooth.value             = spiral_cfg.spiral_mode_smooth.value;
+    cfg.spiral_mode_max_xy_smoothing         = spiral_cfg.spiral_mode_max_xy_smoothing;
+    cfg.spiral_starting_flow_ratio.value     = spiral_cfg.spiral_starting_flow_ratio.value;
+    cfg.spiral_finishing_flow_ratio.value    = spiral_cfg.spiral_finishing_flow_ratio.value;
+}
 
 } // namespace Slic3r

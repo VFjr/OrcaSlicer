@@ -1,5 +1,6 @@
 #include "IMSlider.hpp"
 #include "libslic3r/GCode.hpp"
+#include "libslic3r/Model.hpp"
 #include "GUI_App.hpp"
 #include "NotificationManager.hpp"
 #include "Widgets/StateColor.hpp"
@@ -336,6 +337,14 @@ void IMSlider::SetModeAndOnlyExtruder(const bool is_one_extruder_printed_model, 
 
     auto config = wxGetApp().preset_bundle->full_config();
     m_is_spiral_vase = config.option<ConfigOptionBool>("spiral_mode")->value;
+    if (!m_is_spiral_vase) {
+        for (const ModelObject *object : wxGetApp().model().objects) {
+            if (object->config.has("object_spiral_mode") && object->config.get().opt_bool("object_spiral_mode")) {
+                m_is_spiral_vase = true;
+                break;
+            }
+        }
+    }
 
     m_can_change_color = can_change_color && !m_is_spiral_vase;
 

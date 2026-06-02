@@ -5741,6 +5741,7 @@ void PrintConfigDef::init_fff_params()
 
     def = this->add("spiral_mode", coBool);
     def->label = L("Spiral vase");
+    def->category = L("Others");
     def->tooltip = L("Spiralize smooths out the Z moves of the outer contour. "
                      "And turns a solid model into a single walled print with solid bottom layers. "
                      "The final generated model has no seam.");
@@ -5748,6 +5749,7 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("spiral_mode_smooth", coBool);
+    def->category = L("Others");
     def->label = L("Smooth Spiral");
     def->tooltip = L("Smooth Spiral smooths out X and Y moves as well, "
                      "resulting in no visible seam at all, even in the XY directions on walls that are not vertical.");
@@ -5755,6 +5757,7 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("spiral_mode_max_xy_smoothing", coFloatOrPercent);
+    def->category = L("Others");
     def->label = L("Max XY Smoothing");
     // xgettext:no-c-format, no-boost-format
     def->tooltip = L("Maximum distance to move points in XY to try to achieve a smooth spiral. "
@@ -5768,6 +5771,7 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloatOrPercent(200, true));
 
     def = this->add("spiral_starting_flow_ratio", coFloat);
+    def->category = L("Others");
     def->label = L("Spiral starting flow ratio");
     // xgettext:no-c-format, no-boost-format
     def->tooltip = L("Sets the starting flow ratio while transitioning from the last bottom layer to the spiral. "
@@ -5779,11 +5783,56 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
 
     def = this->add("spiral_finishing_flow_ratio", coFloat);
+    def->category = L("Others");
     def->label = L("Spiral finishing flow ratio");
     // xgettext:no-c-format, no-boost-format
     def->tooltip = L("Sets the finishing flow ratio while ending the spiral. "
                     "Normally the spiral transition scales the flow ratio from 100% to 0% during the last loop "
                     "which can in some cases lead to under extrusion at the end of the spiral.");
+    def->min = 0;
+    def->max = 1;
+    def->set_default_value(new ConfigOptionFloat(0));
+    def->mode = comAdvanced;
+
+    def = this->add("object_spiral_mode", coBool);
+    def->category = L("Others");
+    def->label = L("Spiral vase");
+    def->tooltip = L("Per-object override for spiral vase mode. If disabled at object level, global or plate settings apply.");
+    def->mode = comSimple;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("object_spiral_mode_smooth", coBool);
+    def->category = L("Others");
+    def->label = L("Smooth Spiral");
+    def->tooltip = L("Per-object override for smooth spiral behavior.");
+    def->mode = comSimple;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("object_spiral_mode_max_xy_smoothing", coFloatOrPercent);
+    def->category = L("Others");
+    def->label = L("Max XY Smoothing");
+    def->tooltip = L("Per-object override for maximum XY smoothing distance in smooth spiral mode.");
+    def->sidetext = L("mm or %");
+    def->ratio_over = "nozzle_diameter";
+    def->min = 0;
+    def->max = 1000;
+    def->max_literal = 10;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloatOrPercent(200, true));
+
+    def = this->add("object_spiral_starting_flow_ratio", coFloat);
+    def->category = L("Others");
+    def->label = L("Spiral starting flow ratio");
+    def->tooltip = L("Per-object override for spiral starting flow ratio.");
+    def->min = 0;
+    def->max = 1;
+    def->set_default_value(new ConfigOptionFloat(0));
+    def->mode = comAdvanced;
+
+    def = this->add("object_spiral_finishing_flow_ratio", coFloat);
+    def->category = L("Others");
+    def->label = L("Spiral finishing flow ratio");
+    def->tooltip = L("Per-object override for spiral finishing flow ratio.");
     def->min = 0;
     def->max = 1;
     def->set_default_value(new ConfigOptionFloat(0));
@@ -8519,6 +8568,21 @@ void DynamicPrintConfig::normalize_fdm_1()
     return;
 }
 
+void DynamicPrintConfig::normalize_spiral_vase_object()
+{
+    if (!this->has("object_spiral_mode") || !this->opt<ConfigOptionBool>("object_spiral_mode", true)->value)
+        return;
+
+    if (ConfigOptionInt *opt = this->opt<ConfigOptionInt>("wall_loops", false))
+        opt->value = 1;
+    if (ConfigOptionBool *opt = this->opt<ConfigOptionBool>("alternate_extra_wall", false))
+        opt->value = false;
+    if (ConfigOptionInt *opt = this->opt<ConfigOptionInt>("top_shell_layers", false))
+        opt->value = 0;
+    if (ConfigOptionPercent *opt = this->opt<ConfigOptionPercent>("sparse_infill_density", false))
+        opt->value = 0;
+}
+
 t_config_option_keys DynamicPrintConfig::normalize_fdm_2(int num_objects, int used_filaments)
 {
     t_config_option_keys changed_keys;
@@ -10276,7 +10340,7 @@ std::map<std::string, std::string> validate(const FullPrintConfig &cfg, bool und
 
     // --spiral-vase
     //for non-cli case, we will popup dialog for spiral mode correction
-    if (cfg.spiral_mode && under_cli) {
+    if (static_cast<const PrintConfig&>(cfg).spiral_mode && under_cli) {
         // Note that we might want to have more than one perimeter on the bottom
         // solid layers.
         if (cfg.wall_loops != 1) {
