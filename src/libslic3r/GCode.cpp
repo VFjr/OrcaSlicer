@@ -1718,6 +1718,17 @@ std::vector<GCode::LayerToPrint> GCode::collect_layers_to_print(const PrintObjec
 {
     std::vector<GCode::LayerToPrint> layers_to_print;
     layers_to_print.reserve(object.layers().size() + object.support_layers().size());
+    coordf_t object_min_world_z = std::numeric_limits<coordf_t>::max();
+    for (const PrintInstance &inst : object.instances()) {
+        const BoundingBoxf3 bb = object.model_object()->instance_bounding_box(*inst.model_instance, false);
+        object_min_world_z = std::min(object_min_world_z, coordf_t(bb.min.z()));
+    }
+    if (object_min_world_z == std::numeric_limits<coordf_t>::max())
+        object_min_world_z = object.slicing_parameters().object_print_z_min;
+    const bool allow_empty_initial_layers =
+        object.print()->config().print_sequence == PrintSequence::ByLayer &&
+        object.print()->objects().size() > 1 &&
+        object_min_world_z > EPSILON;
 
     /*
     // Calculate a minimum support layer height as a minimum over all extruders, but not smaller than 10um.
@@ -1773,7 +1784,7 @@ std::vector<GCode::LayerToPrint> GCode::collect_layers_to_print(const PrintObjec
         // Check that there are extrusions on the very first layer. The case with empty
         // first layer may result in skirt/brim in the air and maybe other issues.
         if (layers_to_print.size() == 1u) {
-            if (!has_extrusions)
+            if (!has_extrusions && !allow_empty_initial_layers)
                 throw Slic3r::SlicingError(_(L("One object has an empty first layer and can't be printed. Please Cut the bottom or enable supports.")), object.id().id);
         }
 
@@ -1804,7 +1815,9 @@ std::vector<GCode::LayerToPrint> GCode::collect_layers_to_print(const PrintObjec
                 + std::max(0., extra_gap);
             // Negative support_contact_z is not taken into account, it can result in false positives in cases
 
-            if (has_extrusions && layer_to_print.print_z() > maximal_print_z + 2. * EPSILON)
+            if (has_extrusions &&
+                layer_to_print.print_z() > maximal_print_z + 2. * EPSILON &&
+                !(allow_empty_initial_layers && last_extrusion_layer == nullptr))
                 warning_ranges.emplace_back(std::make_pair((last_extrusion_layer ? last_extrusion_layer->print_z() : 0.), layers_to_print.back().print_z()));
         }
         // Remember last layer with extrusions.
@@ -4487,9 +4500,16 @@ LayerResult GCode::process_layer(
     const Layer         *object_layer  = nullptr;
     const SupportLayer  *support_layer = nullptr;
     const SupportLayer  *raft_layer    = nullptr;
+    size_t               object_layer_count = 0;
+    size_t               object_layer_with_extrusions_count = 0;
     for (const LayerToPrint &l : layers) {
-        if (l.object_layer && ! object_layer)
-            object_layer = l.object_layer;
+        if (l.object_layer) {
+            ++object_layer_count;
+            if (l.object_layer->has_extrusions())
+                ++object_layer_with_extrusions_count;
+            if (!object_layer)
+                object_layer = l.object_layer;
+        }
         if (l.support_layer) {
             if (! support_layer)
                 support_layer = l.support_layer;
@@ -4526,11 +4546,28 @@ LayerResult GCode::process_layer(
     // Just a reminder: A spiral vase mode is allowed for a single object, single material print only.
     m_enable_loop_clipping = true;
     SpiralVase *spiral_vase = this->spiral_vase_for_object(layer.object());
-    if (spiral_vase && layer.object()->spiral_mode_enabled() && layers.size() == 1 && support_layer == nullptr) {
-        bool enable = (layer.id() > 0 || !print.has_brim()) && (layer.id() >= (size_t)print.config().skirt_height.value && ! print.has_infinite_skirt());
+    // For lifted / stacked objects there may be many empty pre-layers before the first
+    // actual extrusion. Spiral-bottom logic must use "extruding layer index" instead of
+    // raw Layer::id(), otherwise bottom shell count is effectively ignored.
+    size_t object_extruding_layer_idx = layer.id();
+    if (object_layer != nullptr) {
+        object_extruding_layer_idx = 0;
+        for (const Layer *obj_layer : object_layer->object()->layers()) {
+            if (!obj_layer->has_extrusions())
+                continue;
+            if (obj_layer == object_layer)
+                break;
+            ++object_extruding_layer_idx;
+        }
+    }
+    const bool single_active_object_layer =
+        (object_layer_count == 1) || (object_layer_with_extrusions_count == 1);
+    if (spiral_vase && layer.object()->spiral_mode_enabled() && single_active_object_layer && support_layer == nullptr) {
+        bool enable = (object_extruding_layer_idx > 0 || !print.has_brim()) &&
+                      (object_extruding_layer_idx >= (size_t)print.config().skirt_height.value && !print.has_infinite_skirt());
         if (enable) {
             for (const LayerRegion *layer_region : layer.regions())
-                if (size_t(layer_region->region().config().bottom_shell_layers.value) > layer.id() ||
+                if (size_t(layer_region->region().config().bottom_shell_layers.value) > object_extruding_layer_idx ||
                     layer_region->perimeters.items_count() > 1u ||
                     layer_region->fills.items_count() > 0) {
                     enable = false;
