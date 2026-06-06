@@ -34,6 +34,10 @@ LayerRegion* Layer::add_region(const PrintRegion *print_region)
     return m_regions.back();
 }
 
+// True when this region/layer uses spiral-vase slicing (global spiral_mode or per-height-range
+// range_spiral_mode). For per-range spiral, region config alone is not enough: a PrintRegion can
+// still carry range_spiral_mode while the layer Z sits outside the modifier band (e.g. the first
+// normal layer above the band). The Z-band check prevents mis-classifying those boundary layers.
 bool LayerRegion::is_spiral_vase_active() const
 {
     const PrintConfig       &print_config  = this->layer()->object()->print()->config();

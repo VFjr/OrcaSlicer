@@ -77,6 +77,8 @@ std::string SpiralVase::process_layer(const std::string &gcode, bool last_spiral
     // in order to update positions.
     if (! m_enabled) {
         m_reader.parse_buffer(gcode);
+        // Leaving a height-range spiral band: drop smooth-spiral history so the next band
+        // does not interpolate XY against points from a different Z section.
         delete m_previous_layer;
         m_previous_layer = NULL;
         m_has_previous_spiral_z = false;
@@ -88,6 +90,9 @@ std::string SpiralVase::process_layer(const std::string &gcode, bool last_spiral
     float layer_height = 0;
     float z = 0.f;
     float declared_layer_height = 0.f;
+    // Per-range spiral only: layer changes can still emit a short XY travel before the
+    // perimeter. Spiral vase normally drops travels, but the Z ramp length must include
+    // that distance or the last extrusions stop short of the target layer height.
     const bool connect_skipped_travels = !m_config.spiral_mode && m_config.use_relative_e_distances.value;
 
     if (const size_t pos = gcode.find("; LAYER_HEIGHT:"); pos != std::string::npos) {
@@ -178,6 +183,8 @@ std::string SpiralVase::process_layer(const std::string &gcode, bool last_spiral
                 float dist_XY = line.dist_XY(reader);
                 if (line.has_x() || line.has_y()) { // Sometimes lines have X/Y but the move is to the last position
                     if (dist_XY > 0 && line.extruding(reader)) { // Exclude wipe and retract
+                        // Emit the skipped travel as a short extrusion so len/total_layer_length
+                        // stay aligned and the Z ramp reaches the full layer height.
                         if (has_pending_travel && pending_travel_length > EPSILON) {
                             const float bridge_e = line.e() * pending_travel_length / std::max(dist_XY, float(EPSILON));
                             len += pending_travel_length;
@@ -190,7 +197,6 @@ std::string SpiralVase::process_layer(const std::string &gcode, bool last_spiral
                             new_gcode += bridge_line.raw() + '\n';
                             has_pending_travel = false;
                         }
-                        const float len_before = len;
                         len += dist_XY;
                         float factor = len / total_layer_length;
                         if (transition_in){

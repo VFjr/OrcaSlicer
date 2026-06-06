@@ -222,6 +222,8 @@ static std::vector<VolumeSlices> slice_volumes_inner(
                             per_range_spiral = true;
                     }
                 if (! slicing_ranges.empty()) {
+                    // Height-range spiral must slice each Z band with PositiveLargestContour independently.
+                    // A single pass over all Z cannot switch slicing mode at band boundaries.
                     if (per_range_spiral && !print_config.spiral_mode) {
                         std::vector<ExPolygons> layers_out(zs.size());
                         for (const PrintObjectRegions::LayerRangeRegions &layer_range : layer_ranges) {

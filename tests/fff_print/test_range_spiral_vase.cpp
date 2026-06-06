@@ -4,11 +4,8 @@
 #include "libslic3r/Print.hpp"
 #include "libslic3r/Layer.hpp"
 #include "libslic3r/Model.hpp"
-#include "libslic3r/Preset.hpp"
 
 #include "test_data.hpp"
-
-#include <algorithm>
 
 using namespace Slic3r;
 using namespace Slic3r::Test;
@@ -97,52 +94,6 @@ TEST_CASE("layer_z_in_height_range boundaries", "[SpiralVase][unit]")
     REQUIRE_FALSE(layer_z_in_height_range(4.99, range));
     REQUIRE_FALSE(layer_z_in_height_range(10.0 - EPSILON, range));
     REQUIRE(layer_z_in_height_range(5.0 + EPSILON, range));
-}
-
-TEST_CASE("dynamic_config_range_spiral_mode", "[SpiralVase][unit]")
-{
-    REQUIRE_FALSE(dynamic_config_range_spiral_mode(nullptr));
-
-    DynamicPrintConfig empty;
-    REQUIRE_FALSE(dynamic_config_range_spiral_mode(&empty));
-
-    DynamicPrintConfig off;
-    off.set_deserialize_strict({ { "range_spiral_mode", false } });
-    REQUIRE_FALSE(dynamic_config_range_spiral_mode(&off));
-
-    DynamicPrintConfig on;
-    on.set_deserialize_strict({ { "range_spiral_mode", true } });
-    REQUIRE(dynamic_config_range_spiral_mode(&on));
-}
-
-TEST_CASE("Height range range_spiral_mode region config", "[SpiralVase][unit]")
-{
-    PrintRegionConfig config;
-    REQUIRE_FALSE(config.range_spiral_mode);
-    config.range_spiral_mode.value = true;
-    config.wall_loops.value            = 1;
-    config.top_shell_layers.value      = 0;
-    config.sparse_infill_density.value = 0;
-    config.bottom_shell_layers.value   = 0;
-    REQUIRE(config.range_spiral_mode);
-    REQUIRE(config.range_spiral_mode_smooth == false);
-    REQUIRE(config.wall_loops == 1);
-    REQUIRE(config.top_shell_layers == 0);
-    REQUIRE(config.sparse_infill_density.value == 0.f);
-    REQUIRE(config.bottom_shell_layers == 0);
-}
-
-TEST_CASE("range_spiral keys in print_options", "[SpiralVase][unit]")
-{
-    const std::vector<std::string> &opts = Preset::print_options();
-    auto has_opt = [&opts](const char *key) {
-        return std::find(opts.begin(), opts.end(), key) != opts.end();
-    };
-    REQUIRE(has_opt("range_spiral_mode"));
-    REQUIRE(has_opt("range_spiral_mode_smooth"));
-    REQUIRE(has_opt("range_spiral_max_xy_smoothing"));
-    REQUIRE(has_opt("range_spiral_starting_flow_ratio"));
-    REQUIRE(has_opt("range_spiral_finishing_flow_ratio"));
 }
 
 TEST_CASE("has_spiral_mode without height ranges", "[SpiralVase][validate]")

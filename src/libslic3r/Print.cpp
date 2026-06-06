@@ -1262,6 +1262,8 @@ StringObjectException Print::check_multi_filament_valid(const Print& print)
 
 // Precondition: Print::validate() requires the Print::apply() to be called its invocation.
 //BBS: refine seq-print validation logic.....FIXME:StringObjectException *warning can only contain one warning, but there might be many warnings, need a vector<StringObjectException>
+// Spiral vase requires a single extrudable material per layer. For per-range spiral, check
+// compatibility only among regions that share the same height modifier band.
 static StringObjectException validate_spiral_vase_compatible_regions(const Print &print, const bool global_spiral)
 {
     const char *opt_key = global_spiral ? "spiral_mode" : "range_spiral_mode";
@@ -2088,6 +2090,7 @@ bool Print::has_support_material() const
     return false;
 }
 
+// Global spiral_mode or any object height-range modifier with range_spiral_mode enabled.
 bool Print::has_spiral_mode() const
 {
     if (m_config.spiral_mode)

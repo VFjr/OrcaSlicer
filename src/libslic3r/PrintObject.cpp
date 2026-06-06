@@ -1543,6 +1543,7 @@ void PrintObject::detect_surfaces_type()
                     // BOOST_LOG_TRIVIAL(trace) << "Detecting solid surfaces for region " << region_id << " and layer " << layer->print_z;
                     Layer       *layer  = m_layers[idx_layer];
                     LayerRegion *layerm = layer->m_regions[region_id];
+                    // Inside a height-range spiral band there are no top/bottom solid shells.
                     if (!spiral_mode && layerm->is_spiral_vase_active()) {
                         Surfaces &surfaces_out = interface_shells ? surfaces_new[idx_layer] : layerm->slices.surfaces;
                         surfaces_out.clear();

@@ -29,6 +29,7 @@ public:
     	m_enabled 		   = en;
     }
 
+    // Per-layer overrides (global print settings or height-range range_spiral_*).
     void set_layer_params(bool smooth_spiral, float max_xy_smoothing, float starting_flow_ratio, float finishing_flow_ratio, bool filter_short_extrusions)
     {
         m_smooth_spiral            = smooth_spiral;

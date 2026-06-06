@@ -3689,6 +3689,7 @@ void GCode::process_layers(
                 in.spiral_params.starting_flow_ratio, in.spiral_params.finishing_flow_ratio,
                 in.spiral_params.filter_short_extrusions);
             spiral_mode.enable(in.spiral_vase_enable);
+            // Zone exit and print top both need finishing-flow taper in the post-processor.
             bool last_spiral_layer = in.spiral_vase_zone_last || in.layer_id == layers_to_print.size() - 1;
             LayerResult out = in;
             out.gcode = spiral_mode.process_layer(std::move(in.gcode), last_spiral_layer);
@@ -3789,6 +3790,7 @@ void GCode::process_layers(
                 in.spiral_params.starting_flow_ratio, in.spiral_params.finishing_flow_ratio,
                 in.spiral_params.filter_short_extrusions);
             spiral_mode.enable(in.spiral_vase_enable);
+            // Zone exit and print top both need finishing-flow taper in the post-processor.
             bool last_spiral_layer = in.spiral_vase_zone_last || in.layer_id == layers_to_print.size() - 1;
             LayerResult out = in;
             out.gcode = spiral_mode.process_layer(std::move(in.gcode), last_spiral_layer);
@@ -4374,6 +4376,8 @@ inline std::string get_instance_name(const PrintObject *object, const PrintInsta
     return get_instance_name(object, inst.id);
 }
 
+// SpiralVase post-processing settings for one layer. Global spiral_mode uses print
+// settings; per-range spiral uses range_spiral_* from the active height modifier.
 static void fill_spiral_vase_layer_params(SpiralVaseLayerParams &params, const Print &print, const Layer &layer, bool enabled)
 {
     if (!enabled)
@@ -4383,11 +4387,11 @@ static void fill_spiral_vase_layer_params(SpiralVaseLayerParams &params, const P
     const float        nozzle_diameter = float(print_config.nozzle_diameter.get_at(0));
 
     if (print_config.spiral_mode) {
-        params.smooth_spiral           = print_config.spiral_mode && print_config.spiral_mode_smooth;
+        params.smooth_spiral           = print_config.spiral_mode_smooth;
         params.max_xy_smoothing        = float(print_config.get_abs_value("spiral_mode_max_xy_smoothing", nozzle_diameter));
         params.starting_flow_ratio     = float(print_config.spiral_starting_flow_ratio);
         params.finishing_flow_ratio    = float(print_config.spiral_finishing_flow_ratio);
-        params.filter_short_extrusions = print_config.spiral_mode;
+        params.filter_short_extrusions = true;
         return;
     }
 
@@ -4395,11 +4399,11 @@ static void fill_spiral_vase_layer_params(SpiralVaseLayerParams &params, const P
         if (!layerm->is_spiral_vase_active())
             continue;
         const PrintRegionConfig &region_config = layerm->region().config();
-        params.smooth_spiral           = region_config.range_spiral_mode && region_config.range_spiral_mode_smooth;
+        params.smooth_spiral           = region_config.range_spiral_mode_smooth;
         params.max_xy_smoothing        = float(region_config.get_abs_value("range_spiral_max_xy_smoothing", nozzle_diameter));
         params.starting_flow_ratio     = float(region_config.range_spiral_starting_flow_ratio);
         params.finishing_flow_ratio    = float(region_config.range_spiral_finishing_flow_ratio);
-        params.filter_short_extrusions = region_config.range_spiral_mode;
+        params.filter_short_extrusions = true;
         return;
     }
 }
@@ -4542,6 +4546,7 @@ LayerResult GCode::process_layer(
         if (enable) {
             const bool global_spiral = print.config().spiral_mode;
             bool       has_spiral_region = false;
+            // Spiral vase needs a single wall loop and no infill on this layer.
             for (const LayerRegion *layer_region : layer.regions()) {
                 if (layer_region->perimeters.items_count() > 1u ||
                     layer_region->fills.items_count() > 0) {
@@ -4551,8 +4556,10 @@ LayerResult GCode::process_layer(
                 if (layer_region->is_spiral_vase_active())
                     has_spiral_region = true;
             }
+            // Per-range spiral: only post-process layers inside an active height band.
             if (!global_spiral && !has_spiral_region)
                 enable = false;
+            // Global spiral: keep solid bottom layers in normal mode before vase starts.
             if (enable && global_spiral) {
                 for (const LayerRegion *layer_region : layer.regions())
                     if (size_t(layer_region->region().config().bottom_shell_layers.value) > layer.id()) {
@@ -4560,6 +4567,7 @@ LayerResult GCode::process_layer(
                         break;
                     }
             }
+            // Last layer of a height-range band (or of the print): enable finishing-flow ramp.
             if (enable) {
                 const Layer *upper = layer.upper_layer;
                 bool         next_spiral = false;
@@ -4579,6 +4587,7 @@ LayerResult GCode::process_layer(
         // If we're going to apply spiralvase to this layer, disable loop clipping.
         m_enable_loop_clipping = !enable;
     }
+    // Loop-split continuity state is only used between per-range spiral layers.
     if (!m_spiral_vase_layer || print.config().spiral_mode)
         m_range_spiral_vase_loop_end_valid = false;
 
@@ -4633,8 +4642,8 @@ LayerResult GCode::process_layer(
 
     // BBS: don't use lazy_raise when enable spiral vase
     gcode += this->change_layer(print_z);  // this will increase m_layer_index
-    // Per-height-range vase: keep XY at the previous loop split point so the next
-    // perimeter does not travel from a timelapse/layer-change park position.
+    // Per-range spiral: after layer change the writer may still be at a park/wipe XY.
+    // Snap to the previous loop split point so the next perimeter starts without travel.
     if (m_spiral_vase_layer && !print.config().spiral_mode && m_range_spiral_vase_loop_end_valid) {
         m_need_change_layer_lift_z = false;
         this->set_last_pos(m_range_spiral_vase_loop_end);
@@ -5814,6 +5823,8 @@ std::string GCode::extrude_loop(const ExtrusionLoop&        loop_ref,
     // find the point of the loop that is closest to the current extruder position
     // or randomize if requested;
     // or, if `start_point` is specified, start the loop at point closest to it
+    // Per-range spiral: split the loop at the previous layer's seam point, not at the
+    // post-layer-change nozzle position (which would add a visible travel/seam).
     Point last_pos = start_point ? *start_point :
         (m_spiral_vase_layer && !m_config.spiral_mode && m_range_spiral_vase_loop_end_valid ?
              m_range_spiral_vase_loop_end :
@@ -5974,6 +5985,7 @@ std::string GCode::extrude_loop(const ExtrusionLoop&        loop_ref,
             // TODO: testing is needed with slope seams and adaptive PA.
             m_multi_flow_segment_path_pa_set = true;
         }
+        // Closed loop: first_point == seam split point for the next layer's continuity.
         if (m_spiral_vase_layer && !m_config.spiral_mode && !paths.empty()) {
             m_range_spiral_vase_loop_end       = paths.front().first_point();
             m_range_spiral_vase_loop_end_valid = true;

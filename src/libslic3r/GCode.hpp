@@ -180,7 +180,7 @@ struct LayerResult {
     // Is spiral vase post processing enabled for this layer?
     bool        spiral_vase_enable { false };
     SpiralVaseLayerParams spiral_params;
-    // Last layer of a spiral vase height-range zone (flow ramp-out), not necessarily the object's last layer.
+    // Last layer inside a height-range spiral band; triggers finishing-flow taper in SpiralVase.
     bool        spiral_vase_zone_last { false };
     // Should the cooling buffer content be flushed at the end of this layer?
     bool        cooling_buffer_flush { false };
@@ -560,6 +560,7 @@ private:
     TimelapsePosPicker                  m_timelapse_pos_picker;
     bool                                m_enable_loop_clipping;
     bool                                m_spiral_vase_layer { false };
+    // Per-range spiral: XY seam point carried from the previous spiral layer for loop continuity.
     bool                                m_range_spiral_vase_loop_end_valid { false };
     Point                               m_range_spiral_vase_loop_end;
     //resonance avoidance
